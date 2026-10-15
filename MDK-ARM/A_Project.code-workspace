@@ -1,0 +1,16 @@
+{
+    "folders": [
+        {
+            "path": ".."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.ld": "linker-script",
+            "*.s": "asm",
+            "lvgl.h": "c",
+            "lv_port_disp.h": "c"
+        }
+    },
+    "extensions": {}
+}

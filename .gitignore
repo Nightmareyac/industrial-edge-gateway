@@ -1,0 +1,25 @@
+# Keil / MDK-ARM 编译产物
+*.o
+*.d
+*.crf
+*.dep
+*.lnp
+*.axf
+*.htm
+*.sct
+*.build_log.htm
+*.map
+*.lst
+*.bak
+*.uvguix.*
+*.uvoptx
+
+# VS Code / 插件运行时日志
+.vscode/
+*.log
+MDK-ARM/.vscode/keil-assistant.log
+
+# 操作系统临时文件
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
