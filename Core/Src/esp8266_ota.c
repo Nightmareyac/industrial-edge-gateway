@@ -29,6 +29,22 @@ static void ESP_8266_ClearBuf(void)
 // hal库串口回调函数:接收一字节自动调用，压入缓冲区并开启下次接收
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+    //判断触发源
+    if (huart->Instance == USART3)
+    {
+        //防溢出保护:检查当前缓冲区是否溢出
+        if (esp_rx_len <(ESP_RX_BUF_SIZE -1))
+        {
+            //存入仓库并且移动游标
+            //将接收到的一个字节存入buf，然后长度++
+            esp_rx_buf[esp_rx_len++] = uart3_rx_byte;
+        }
+
+        //收完字节后中断停止，继续监听下一个字节
+        HAL_UART_Receive_IT(&huart3,&uart3_rx_byte,1);
+        
+    }
+    
 }
 
 void ESP8266_Init(void)
@@ -86,7 +102,7 @@ bool ESP8266_JoinAP(const char *ssid, const char *pwd)
     char cmd_buf[128];
 
     // 1设置为station模式 （客户端模式)
-    if (!ESP8266_SendCmd("ATCWMODE=1\r\n", "OK", 1000))
+    if (!ESP8266_SendCmd("AT+CWMODE=1\r\n", "OK", 1000))
     {
         return false;
     }
@@ -170,7 +186,7 @@ static void W25Q64_Write_Safe(uint32_t addr, uint8_t *pbuf, uint32_t len)
  * @param port      http 端口
  * @param file_path 固件路径
  */
-bool ESP8266__HTTP_OTA_Download(const char *server_ip, uint16_t port, const char *file_path)
+bool ESP8266_HTTP_OTA_Download(const char *server_ip, uint16_t port, const char *file_path)
 {
     char cmd_buf[256];
     char http_req[256];
@@ -205,10 +221,10 @@ bool ESP8266__HTTP_OTA_Download(const char *server_ip, uint16_t port, const char
         if (header_end != NULL)
         {
             break;
-            osDelay(10);
         }
+        osDelay(10);
     }
-    if (header_end != NULL)
+    if (header_end == NULL)
         return false; // 未收到响应头
 
     if (strstr((const char *)esp_rx_buf, "200 OK") == NULL)
@@ -216,7 +232,7 @@ bool ESP8266__HTTP_OTA_Download(const char *server_ip, uint16_t port, const char
 
     // 提取content-length 字段获取固件大小
     uint32_t total_fw_size = 0;
-    char *content_len_ptr = strstr((const char *)esp_rx_buf, "Content Length");
+    char *content_len_ptr = strstr((const char *)esp_rx_buf, "Content-Length");
     if (content_len_ptr != NULL)
     {
         // ASCII转换为整数
@@ -318,7 +334,7 @@ bool ESP8266__HTTP_OTA_Download(const char *server_ip, uint16_t port, const char
     ota_info.fw_crc32 = crc32_val;
     ota_info.version = 201;//v2.1
 
-    W25Q64_SectorErase(W25Q64_OTA_FLAG_ADDR);
+    W25Q64_EraseSector(W25Q64_OTA_FLAG_ADDR);
     W25Q64_Write_Safe(W25Q64_OTA_FLAG_ADDR, (uint8_t *)&ota_info, sizeof(OTA_Info_t));
 
     osDelay(1000);

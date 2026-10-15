@@ -29,7 +29,7 @@
 #include "lvgl.h"
 #include "lv_port_disp.h"
 #include "w25q64.h"
-#include "modbus_rtu.h"'
+#include "modbus_rtu.h"
 #include "esp8266_ota.h"
 #include <stdio.h>
 
@@ -88,7 +88,7 @@ const osThreadAttr_t MQTTTask_attributes = {
 osThreadId_t NetworkTaskHandle;
 const osThreadAttr_t NetworkTask_attributes = {
   .name = "NetworkTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for DogTask */
@@ -258,6 +258,21 @@ void StartUITask(void *argument)
         lv_label_set_text(temp_label, "Temp: Error");
         lv_label_set_text(humi_label, "Humi: Offline");
       }
+    }
+
+    // 实时同步显示当前 Wi-Fi / OTA 状态
+    static OTA_State_t last_ota_state = OTA_STATE_IDLE;
+    if (g_ota_state != last_ota_state)
+    {
+        last_ota_state = g_ota_state;
+        if (g_ota_state == OTA_STATE_WIFI_CONNECTING)
+            lv_label_set_text(status_label, "WiFi: Connecting...");
+        else if (g_ota_state == OTA_STATE_WIFI_CONNECTED)
+            lv_label_set_text(status_label, "WiFi: Connected | Ready");
+        else if (g_ota_state == OTA_STATE_DOWNLOADING)
+            lv_label_set_text(status_label, "OTA: Downloading...");
+        else if (g_ota_state == OTA_STATE_ERROR)
+            lv_label_set_text(status_label, "WiFi/OTA: Error!");
     }
 
     // 这两行必须在 for 循环主干上，决不能套进 if 内部！
