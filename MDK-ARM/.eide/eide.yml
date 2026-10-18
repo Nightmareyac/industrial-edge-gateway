@@ -7,10 +7,7 @@ srcDirs:
   - ../Middlewares/Third_Party/lvgl
 virtualFolder:
   name: <virtual_root>
-  files:
-    - path: ../Core/Src/st7789.c
-    - path: ../Core/Src/modbus_rtu.c
-    - path: ../Core/Src/esp8266_ota.c
+  files: []
   folders:
     - name: Application
       files: []
@@ -33,6 +30,9 @@ virtualFolder:
                 - path: ../Core/Src/stm32f4xx_hal_msp.c
                 - path: ../Core/Src/stm32f4xx_hal_timebase_tim.c
                 - path: ../Core/Src/w25q64.c
+                - path: ../Core/Src/st7735.c
+                - path: ../Core/Src/modbus_rtu.c
+                - path: ../Core/Src/esp8266_ota.c
               folders: []
     - name: Drivers
       files: []
@@ -114,8 +114,7 @@ targets:
         options:
           version: 4
           afterBuildTasks: []
-          asm-compiler:
-            defines: []
+          asm-compiler: {}
           beforeBuildTasks: []
           c/cpp-compiler:
             CXX_FLAGS: --diag_suppress=1 --diag_suppress=1295
@@ -126,14 +125,8 @@ targets:
             warnings: all-warnings
           global:
             output-debug-info: enable
-            use-microLIB: false
           linker:
-            $outputTaskExcludes:
-              - .bin
             output-format: elf
-            ro-base: ""
-            rw-base: ""
-            xo-base: ""
         scatterFilePath: ""
         storageLayout:
           RAM:
@@ -156,13 +149,13 @@ targets:
               isChecked: true
               isStartup: true
               mem:
-                size: "0x00100000"
-                startAddr: "0x08000000"
+                size: "0x000F0000"
+                startAddr: "0x08010000"
               tag: IROM
         useCustomScatterFile: false
     uploadConfigMap:
       JLink:
-        baseAddr: ""
+        baseAddr: "0x08010000"
         bin: ""
         cpuInfo:
           cpuName: "null"
@@ -171,7 +164,7 @@ targets:
         proType: 1
         speed: 8000
       OpenOCD:
-        baseAddr: "0x08000000"
+        baseAddr: "0x08010000"
         bin: ""
         interface: cmsis-dap
         target: stm32f4x

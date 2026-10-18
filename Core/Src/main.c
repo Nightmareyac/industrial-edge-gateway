@@ -25,7 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "st7789.h"
+#include "st7735.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,6 +70,22 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
 
+  /**
+   * @brief OTA 场景下的中断向量表重定位
+   *
+   * APP 烧在 0x08010000（前 64KB 留给 Bootloader），向量表也必须搬到同一地址，
+   * 否则中断仍然去 0x08000000 取入口，会跑进 Bootloader 的处理函数甚至 HardFault。
+   *
+   * 位置很关键 —— 必须放在 HAL_Init() 之前：
+   *   本工程用 TIM14 作为 HAL 时基（stm32f4xx_hal_timebase_tim.c），
+   *   HAL_Init() 内部就会使能 TIM14 的中断。若 VTOR 在 HAL_Init() 之后才搬，
+   *   这段窗口里到达的中断仍会按 Bootloader 的向量表分发。
+   *   放在 main 的第一句时，NVIC 还处于复位后的全关状态，不存在竞争窗口。
+   */
+  SCB->VTOR = FLASH_BASE | 0x10000U;
+  __DSB();   /* 保证 VTOR 写入在任何后续异常取向量之前生效 */
+  __ISB();
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -96,9 +112,9 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  ST7789_Init();
-  // ST7789_Clear(WHITE);
-  // ST7789_ShowString(20, 40, "ST7789 HARDWARE OK", WHITE, BLACK);
+  ST7735_Init();
+  // ST7735_Clear(WHITE);
+  // ST7735_ShowString(4, 40, "ST7735 OK", BLACK, WHITE);
   // HAL_Delay(3000);   // 延时 3 秒，肉眼确认
   /* USER CODE END 2 */
 

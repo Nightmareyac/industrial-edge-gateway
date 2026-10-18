@@ -4,6 +4,7 @@
 #include "main.h"
 #include "stdbool.h"
 
+#define ESP_RX_BUF_SIZE 2048
 //w25q64容量8mb
 //最小擦除代为为扇区(sector) = 4kb(4096 bytes)
 //写入单位:页(page) = 256 bytes
@@ -31,11 +32,18 @@ typedef struct
     uint32_t version;
 }OTA_Info_t;
 
+extern uint8_t esp_rx_buf[ESP_RX_BUF_SIZE];
+/* USART3 出错次数（ORE/NE/FE/PE）。涨了说明曾经溢出过，
+ * 溢出会让 HAL abort 接收，必须靠 HAL_UART_ErrorCallback 重新挂上 */
+extern volatile uint32_t g_uart3_err_cnt;
+
+
+void ESP_8266_ClearBuf(void);
+uint16_t ESP8266_GetRxLen(void);
 void ESP8266_Init(void);
 bool ESP8266_SendCmd(const char *cmd, const char *ack, uint32_t timeout_ms);
 bool ESP8266_JoinAP(const char *ssid, const char *pwd);
-bool ESP8266__HTTP_OTA_Download(const char *server_ip, uint16_t port, const char *file_path);
-
+bool ESP8266_HTTP_OTA_Download(const char *server_ip, uint16_t port, const char *file_path);
 
 
 #endif

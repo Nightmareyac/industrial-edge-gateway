@@ -23,3 +23,17 @@ MDK-ARM/.vscode/keil-assistant.log
 Thumbs.db
 [Dd]esktop.ini
 .DS_Store
+
+# 编译输出目录（EIDE）
+MDK-ARM/build/
+build/
+Objects/
+Listings/
+
+# OTA 发布目录里的固件二进制：属于构建产物，不进版本库
+# （目录结构与发布流程见 README，各版本 bin 由本地编译生成）
+ota_release/*.bin
+ota_release/_unused/
+
+# WorkBuddy 项目数据
+.workbuddy/
