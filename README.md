@@ -1,6 +1,6 @@
-# industrial-edge-gateway
+# 工业边缘多协议（Modbus/CAN）网关系统
 
-STM32F407 + FreeRTOS + LVGL 的工业边缘网关，带 **巴法云 MQTT 远程 OTA 升级**。
+> `industrial-edge-gateway` — STM32F407 + FreeRTOS + LVGL 的工业边缘网关，带 **巴法云 MQTT 远程 OTA 升级**。
 
 从零打通了整条链路：云端下发指令 → ESP-01S 联网下载固件 → 写入外部 Flash → 重启校验搬运 → 新版本运行。全过程踩了 12 个坑，本文档完整记录了每一个的**现象、定位手法、根因、修复**，以及面试时该怎么讲。
 
