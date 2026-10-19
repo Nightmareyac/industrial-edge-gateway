@@ -32,7 +32,10 @@ Listings/
 
 # OTA 发布目录里的固件二进制：属于构建产物，不进版本库
 # （目录结构与发布流程见 README，各版本 bin 由本地编译生成）
+# 注意要写成 **/ 才能同时匹配 archive/ 子目录，
+# 只写 ota_release/*.bin 会漏掉 ota_release/archive/*.bin
 ota_release/*.bin
+ota_release/**/*.bin
 ota_release/_unused/
 
 # WorkBuddy 项目数据

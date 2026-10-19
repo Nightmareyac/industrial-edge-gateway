@@ -843,7 +843,13 @@ void StartMQTTTask(void *argument)
      *        |                       失败: ERROR -> ESP8266_Init() -> WIFI_CONNECTED
      *        +--------------------------------+
      */
-    //收到消息，esp8266会主动上报,+MQTTSUBRECV:0,"<topic>",<len>,upgrade
+    /* 收到消息时，ESP8266 会主动上报：
+     *   +MQTTSUBRECV:0,"<topic>",<len>,upgrade
+     *
+     * 注意：这里用 strstr 直接扫 esp_rx_buf，依赖“缓冲区末尾可读且最终有 0”
+     * 这一隐含前提（ClearBuf 会 memset，ISR 最多写到 2046）。
+     * OTA 解析器内部已经改成带长度的 OTA_BufFind；如果以后要严格化，
+     * 这里也应换成“按 esp_rx_len 做有界查找”，避免匹配到已消费的旧报文。 */
     if ((strstr((const char *)esp_rx_buf, "+MQTTSUBRECV:") != NULL) &&
         (strstr((const char *)esp_rx_buf, "upgrade") != NULL))
     {
