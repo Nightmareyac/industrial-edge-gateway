@@ -544,9 +544,24 @@ cp MDK-ARM/build/A_Project/A_Project.bin ota_release/A_Project_vx.y.bin
 | `uninstall_ota_service.cmd` | 双击卸载 |
 | `ota_server_run.cmd` | 前台运行，想实时看日志时用 |
 
-服务由 **Windows 计划任务**承载：`SYSTEM` 身份、开机延迟 15 秒自启、
-session 0 无窗口运行。不占桌面、不需要登录、关掉任何窗口都不影响；
-进程意外退出后 1 分钟内自动重启（最多 3 次）。
+服务由 **Windows 计划任务**承载：`SYSTEM` 身份、session 0 无窗口运行。
+不占桌面、不需要登录、关掉任何窗口都不影响；进程意外退出后 1 分钟内
+自动重启（最多 3 次）。
+
+两个触发器：**开机**（延迟 15 秒）+ **登录**（延迟 30 秒）。
+加登录触发是因为 Windows 快速启动（混合关机）在部分机器上会漏跑开机触发
+—— 表现为"重启后服务没起来"。两个触发器撞在一起也不会起两个实例：
+任务本身 `MultipleInstances=IgnoreNew`，且服务在 bind 前会主动探测端口，
+发现是自己人就静默退出（退出码 0）。
+
+> **Install 只需要执行一次**。任务写进系统任务库，重启后依然有效，
+> 开机自动启动，**不需要每次开机再敲一遍命令**。只有这三种情况要重跑：
+>
+> | 什么时候 | 为什么 |
+> |---|---|
+> | Python 换了大版本（3.13 → 3.14） | 任务 Action 里记的是 `pythonw.exe` 的绝对路径 |
+> | 改了端口或固件目录 | 参数写在任务 Action 里 |
+> | 执行过 `Uninstall` | 任务被删掉了 |
 
 ```powershell
 # 安装（也可以直接双击 install_ota_service.cmd）

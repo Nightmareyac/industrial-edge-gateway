@@ -158,8 +158,16 @@ function Install-Service {
     $act = New-ScheduledTaskAction -Execute $pyw -Argument $arg -WorkingDirectory $ScriptDir
 
     # 开机启动 + 延迟 15 秒：等网络栈和防火墙服务先就绪
-    $trg = New-ScheduledTaskTrigger -AtStartup
-    $trg.Delay = 'PT15S'
+    $trgBoot = New-ScheduledTaskTrigger -AtStartup
+    $trgBoot.Delay = 'PT15S'
+
+    # 兜底触发器。Windows 的"快速启动"（HiberbootEnabled=1，走混合关机）
+    # 在部分机器上会漏跑 AtStartup 任务，表现为"重启后服务没起来"。
+    # 再加一个登录触发器，只要有人登录就补一次启动。
+    # 不会起两个实例：任务本身 MultipleInstances=IgnoreNew，
+    # 且 ota_server.py 在端口被自己占用时会静默退出。
+    $trgLogon = New-ScheduledTaskTrigger -AtLogon
+    $trgLogon.Delay = 'PT30S'
 
     $prn = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 
@@ -167,7 +175,7 @@ function Install-Service {
     # 把"运行时间过长"的任务强制结束，服务就悄悄没了
     $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
 
-    Register-ScheduledTask -TaskName $TaskName -Action $act -Trigger $trg -Principal $prn -Settings $set -Force -Description 'OTA firmware HTTP server (port 80)' | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $act -Trigger @($trgBoot, $trgLogon) -Principal $prn -Settings $set -Force -Description 'OTA firmware HTTP server (port 80)' | Out-Null
 
     Write-Host ("[OK] 已注册计划任务 {0}" -f $TaskName) -ForegroundColor Green
     Write-Host ("[OK] 解释器 {0}" -f $pyw)

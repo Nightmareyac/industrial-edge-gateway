@@ -32,6 +32,7 @@ import os
 import socket
 import sys
 import time
+import urllib.request
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -226,6 +227,48 @@ class OTAServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def port_in_use(port, host="127.0.0.1"):
+    """端口上是否已经有东西在监听。
+
+    为什么不能靠 bind 失败来发现冲突：
+    Windows 的 SO_REUSEADDR 语义和 Linux 完全不同 —— 它允许
+    **重复绑定一个已经在被监听的端口**。实测两个实例都能 bind 成功，
+    端口看起来只有一个，实际是两套 socket 在互相抢连接，
+    排障时会看到"请求时好时坏"这种最难受的现象。
+    所以必须在 bind 之前主动探一次。
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        # connect_ex 返回 0 表示连得上，即有人监听
+        return s.connect_ex((host, port)) == 0
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def probe_existing(port):
+    """端口上是否已经跑着一个"本服务"的实例。
+
+    用途：计划任务配了开机 + 登录两个触发器（快速启动下 AtStartup 会漏跑），
+    两个触发器可能撞在一起。任务本身设置了 MultipleInstances=IgnoreNew，
+    正常情况下不会重复启动；但如果是手工再跑一次 ota_server.py，
+    第二个进程会因端口占用而启动失败。
+
+    这里主动探一下：能拿到 /health 且 server 字段对得上，
+    就说明是"自己人"，静默退出即可，不该报错。
+    """
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/health" % port, timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("server") == "ota-firmware-server"
+    except Exception:
+        # 连不上 / 不是 JSON / 字段不对 —— 一律认为不是本服务
+        return False
+
+
 def local_ipv4_list():
     """列出本机 IPv4，方便确认"设备端该填哪个地址"。"""
     ips = []
@@ -283,14 +326,34 @@ def main():
     log_line("=" * 62)
     log_line("OTA 固件服务启动")
 
+    # bind 之前先探端口（原因见 port_in_use 的注释）：
+    # 判断顺序是"先看是不是自己人，再看是不是别人"
+    probe_host = BIND if BIND not in ("0.0.0.0", "::") else "127.0.0.1"
+    if port_in_use(PORT, probe_host):
+        if probe_existing(PORT):
+            # 开机触发器和登录触发器撞在一起时会走到这里，属于正常情况
+            log_line("端口 %d 上已有本服务实例在运行，本次启动跳过" % PORT)
+            return 0
+
+        log_line("端口 %d 已被其它程序占用，用下面两条命令查：" % PORT)
+        log_line("    netstat -ano | findstr :%d" % PORT)
+        log_line('    tasklist /FI "PID eq <上一步查到的PID>"')
+        return 1
+
     try:
         httpd = OTAServer((BIND, PORT), OTAHandler)
     except OSError as e:
         log_line("绑定 %s:%d 失败：%s" % (BIND, PORT, e))
-        log_line("端口多半被别的程序占了，用下面两条命令查：")
+
+        # 先看是不是"自己已经在了"。是的话属于正常情况，静默成功退出，
+        # 免得开机+登录两个触发器撞在一起时日志里刷一条吓人的报错
+        if probe_existing(PORT):
+            log_line("端口上已有本服务实例在运行，本次启动跳过")
+            return 0
+
+        log_line("端口被其它程序占用，用下面两条命令查：")
         log_line("    netstat -ano | findstr :%d" % PORT)
         log_line('    tasklist /FI "PID eq <上一步查到的PID>"')
-        log_line("如果是旧的服务实例，先运行 uninstall_ota_service.cmd 或手动结束它")
         return 1
 
     log_line("固件目录  %s" % ROOT)
