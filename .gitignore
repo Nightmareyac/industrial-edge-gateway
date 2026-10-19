@@ -37,3 +37,7 @@ ota_release/_unused/
 
 # WorkBuddy 项目数据
 .workbuddy/
+
+# OTA 服务的运行日志：属于本机运行产物，不进版本库
+tools/ota_server.log
+tools/ota_server.log.1

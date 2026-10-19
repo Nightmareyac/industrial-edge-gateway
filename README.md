@@ -519,10 +519,72 @@ A_Project/
 #    Core/Src/esp8266_ota.c -> ota_info.version = xyz
 # 2. 编译，把产物拷进发布目录并带版本号
 cp MDK-ARM/build/A_Project/A_Project.bin ota_release/A_Project_vx.y.bin
-# 3. 起一个 HTTP 服务（局域网内）
-cd ota_release && python -m http.server 80
-# 4. 让设备下载对应路径的固件（freertos.c 里的 ESP8266_HTTP_OTA_Download 第三个参数）
+# 3. 让设备下载对应路径的固件（freertos.c 里的 ESP8266_HTTP_OTA_Download 第三个参数）
 ```
+
+服务端的根目录就是 `ota_release/`，文件一换立刻生效，不用重启服务。
+所以实际发布流程收敛成三步：**编译 → 拷进 `ota_release` → 巴法云发 `upgrade`**。
+
+### OTA 服务端（常驻部署）
+
+设备要能下载固件，局域网里必须有一个 HTTP 服务在跑。
+
+**不要用 `python -m http.server`**：它是前台进程，绑在当前控制台上，
+关掉终端 / 退出 IDE / 注销用户就没了，设备一发 `upgrade` 就是连接被拒；
+而且它不写日志文件，OTA 失败时无法回查"服务器到底收没收到请求"——
+排查第 11、12 个坑时，全靠这份日志才把范围从"网络不通"缩到"设备侧没消费"。
+
+`tools/` 下是一套常驻方案：
+
+| 文件 | 作用 |
+|---|---|
+| `ota_server.py` | 服务本体：固定根目录、日志落文件、`/health` 自检 |
+| `ota_service.ps1` | 管理入口：`Install / Start / Stop / Restart / Status / Log / Uninstall` |
+| `install_ota_service.cmd` | 双击安装（自动请求管理员权限） |
+| `uninstall_ota_service.cmd` | 双击卸载 |
+| `ota_server_run.cmd` | 前台运行，想实时看日志时用 |
+
+服务由 **Windows 计划任务**承载：`SYSTEM` 身份、开机延迟 15 秒自启、
+session 0 无窗口运行。不占桌面、不需要登录、关掉任何窗口都不影响；
+进程意外退出后 1 分钟内自动重启（最多 3 次）。
+
+```powershell
+# 安装（也可以直接双击 install_ota_service.cmd）
+powershell -ExecutionPolicy Bypass -File tools\ota_service.ps1 -Action Install
+
+# 日常操作
+powershell -ExecutionPolicy Bypass -File tools\ota_service.ps1 -Action Status
+powershell -ExecutionPolicy Bypass -File tools\ota_service.ps1 -Action Restart
+powershell -ExecutionPolicy Bypass -File tools\ota_service.ps1 -Action Log -Tail 50
+```
+
+`-Action Status` 的输出同时给出三层信息：
+
+```
+计划任务 : Running
+端口监听 : TCP  0.0.0.0:80  LISTENING  23968
+自检     : OK
+{ "status": "ok", "firmwares": [ { "name": "A_Project_v3.0.bin", "size": 206884 } ] }
+```
+
+**访问日志** `tools/ota_server.log`，一个请求一行：
+
+```
+2026-10-19 10:09:11  192.168.137.13  GET  /A_Project_v3.0.bin  -> 200  206884B   25ms
+```
+
+排查 OTA 时先看这一行，三种情况一眼分开：
+
+| 日志现象 | 结论 |
+|---|---|
+| 完全没有这一行 | 设备的 GET 没过网（连接建了但没发数据） |
+| `-> 404` | 路径写错，检查 `ESP8266_HTTP_OTA_Download` 第三个参数 |
+| `-> 200` 但字节数不足 / 行尾标注"客户端提前断开" | 传到一半中断，看设备侧接收循环 |
+
+换端口用 `-Port 8080 -Action Install`，但设备端
+`ESP8266_HTTP_OTA_Download("192.168.137.1", 80, ...)` 的端口要同步改。
+若 80 被别的程序占用，`Status` 会直接显示"端口监听：无"，
+用 `netstat -ano | findstr :80` 查出占用进程。
 
 ### 配置项（部署前必改）
 
