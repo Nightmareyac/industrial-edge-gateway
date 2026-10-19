@@ -487,6 +487,7 @@ RX_DATA: take = min(n, frame_remain)
 A_Project/
 ├── Core/
 │   ├── Inc/
+│   │   ├── app_config.h         # 版本号 + OTA 服务器配置（发版只改这里）
 │   │   ├── esp8266_ota.h        # OTA 接口与 OTA_Info_t 定义
 │   │   ├── w25q64.h             # 外部 Flash 驱动
 │   │   └── st7735.h             # 屏幕驱动
@@ -511,19 +512,46 @@ A_Project/
 3. JLink / OpenOCD 下载
 4. 首次上电打开 USART1（PA9/PA10，115200）看 AT 握手日志
 
-### 发布新版本
+### 发布新版本（推送，不需要重烧设备）
 
-```bash
-# 1. 改版本号（屏幕标题 + OTA 标志里的 version）
-#    Core/Src/freertos.c    -> "Edge Gateway Vx.y"
-#    Core/Src/esp8266_ota.c -> ota_info.version = xyz
-# 2. 编译，把产物拷进发布目录并带版本号
-cp MDK-ARM/build/A_Project/A_Project.bin ota_release/A_Project_vx.y.bin
-# 3. 让设备下载对应路径的固件（freertos.c 里的 ESP8266_HTTP_OTA_Download 第三个参数）
+版本号与 OTA 服务参数全部集中在 `Core/Inc/app_config.h`：
+
+```c
+#define APP_VERSION_STR   "V3.1"   /* 屏幕标题显示 */
+#define APP_VERSION_NUM   310      /* 写进 OTA 标志，主版本*100+次版本 */
+
+#define OTA_SERVER_IP     "192.168.137.1"
+#define OTA_SERVER_PORT   80
+#define OTA_FIRMWARE_PATH "/A_Project.bin"   /* 固定名，不带版本号 */
 ```
 
-服务端的根目录就是 `ota_release/`，文件一换立刻生效，不用重启服务。
-所以实际发布流程收敛成三步：**编译 → 拷进 `ota_release` → 巴法云发 `upgrade`**。
+发布流程：
+
+```powershell
+# 1. 改 app_config.h 里的 APP_VERSION_STR / APP_VERSION_NUM
+# 2. EIDE 编译
+# 3. 一条命令发布
+powershell -ExecutionPolicy Bypass -File tools\publish_firmware.ps1 -Version 3.1
+# 4. 巴法云发 upgrade
+```
+
+`publish_firmware.ps1` 会依次做六件事，任何一项不过直接拒绝发布：
+
+| 检查 | 拦住什么 |
+|---|---|
+| 初始 SP 落在 `0x2000xxxx` / `0x1000xxxx` | 不是合法的 ARM 镜像 |
+| **Reset 向量落在 `0x08010000`~`0x080FFFFF`** | **按 `0x08000000` 链接的镜像 —— 也就是第 1 个坑的白屏根因** |
+| 大小 ≤ `0xF0000`（983040） | 超出 APP 分区，Bootloader 擦不下 |
+| bin 里能搜到 `Edge Gateway V3.1` | 改了版本号没重新编译 / 推了上一版 |
+| 原子替换（先写 `.tmp` 再 rename） | 设备正在下载时读到半个文件 |
+| `/health` 比对 md5 | 服务端拿到的和本地不是同一份 |
+
+> 用当初真实白屏的那个镜像 `firmware_0x08000000_legacy.bin`
+> （Reset = `0x0800033D`）实测过，脚本能准确拦住并指出问题出在链接地址。
+
+**入口文件名固定为 `A_Project.bin`**，设备端永远请求这一个 URL。服务端换文件，
+设备下次升级就拿新的 —— 这才是"推送"；否则只是换个方式烧录。
+带版本号的副本自动归档到 `ota_release/archive/`，事后可追溯刷过哪些版本。
 
 ### OTA 服务端（常驻部署）
 
@@ -605,10 +633,11 @@ powershell -ExecutionPolicy Bypass -File tools\ota_service.ps1 -Action Log -Tail
 
 | 位置 | 宏 / 参数 | 说明 |
 |---|---|---|
+| `Core/Inc/app_config.h` | `APP_VERSION_STR` / `APP_VERSION_NUM` | 版本号，**发版只改这里** |
+| `Core/Inc/app_config.h` | `OTA_SERVER_IP` / `OTA_SERVER_PORT` / `OTA_FIRMWARE_PATH` | OTA 服务器；路径固定 `/A_Project.bin` |
 | `freertos.c` | `BEMFA_UID` | 巴法云私钥 |
 | `freertos.c` | `BEMFA_TOPIC` | 订阅主题（必须是纯 `type=3`，不要绑物模型） |
 | `freertos.c` | `ESP8266_JoinAP("ssid", "pwd")` | WiFi 凭据 |
-| `freertos.c` | `ESP8266_HTTP_OTA_Download(ip, port, path)` | OTA 服务器地址与固件路径 |
 
 ---
 

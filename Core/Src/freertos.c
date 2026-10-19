@@ -31,6 +31,7 @@
 #include "w25q64.h"
 #include "modbus_rtu.h"
 #include "esp8266_ota.h"
+#include "app_config.h"
 #include "usart.h"
 #include <stdio.h>
 #include <string.h>
@@ -88,22 +89,58 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-osMessageQueueId_t sensorQueueHandle; //传感器数据队列句柄
-//全局状态，供给ui展示联网和升级state
+osMessageQueueId_t sensorQueueHandle; //传感器数据队列句柄（与 OTA 无关，只供 UI 读传感器）
+
+/* ============================================================================
+ * 全局状态变量关系图（四个变量，各管一层，不要混用）
+ * ----------------------------------------------------------------------------
+ *   g_ota_state      ：网络/OTA 生命周期（IDLE / CONNECTING / CONNECTED /
+ *                      DOWNLOADING / ERROR）。只回答"现在处在哪个大阶段"。
+ *   g_mqtt_online    ：MQTT 是否"已连接且已订阅"（0/1）。它比 WIFI_CONNECTED
+ *                      更严格：WiFi 连上不代表巴法云能看到设备。
+ *   g_mqtt_fail_stage：最近一次 MQTT 失败卡在哪一层（0..4），是**粘滞诊断值**；
+ *                      成功后清 0，失败后保留，所以 UI 必须配合 online==0 看。
+ *   g_at_tail        ：模块最近一次应答/OTA 阶段标记的 20 字摘要，纯诊断，
+ *                      不参与任何控制流；UI 每 5ms 比较一次并刷新。
+ *
+ * 关系：
+ *   g_ota_state == WIFI_CONNECTED  只是"可以开始 MQTT"的前置条件；
+ *   g_mqtt_online == 1             才是"云端在线"；
+ *   g_mqtt_fail_stage != NONE      且 online == 0 时，UI 才显示具体失败原因；
+ *   g_at_tail 与上面三者没有因果，只反映"模块/OTA 最后说了什么"。
+ *
+ * 合法迁移（与 esp8266_ota.h 的枚举注释对应）：
+ *   IDLE -> WIFI_CONNECTING -> WIFI_CONNECTED -> DOWNLOADING
+ *                              ^         |
+ *                              |         +-> 成功: 写标志 + NVIC_SystemReset()
+ *                              |         +-> 失败: ERROR -> ESP8266_Init() -> WIFI_CONNECTED
+ *                              +-- WiFi 失败: ERROR -> 5s -> WIFI_CONNECTING
+ * ========================================================================== */
+
+/* 网络/OTA 大阶段，供 UI 展示，也供 MQTTTask 等待 WiFi 就绪。
+ * 重要：枚举值大小没有顺序语义（ERROR=5 > WIFI_CONNECTED=2），
+ *       只能用 == / != 比较，禁止用 < / >。 */
 volatile OTA_State_t g_ota_state = OTA_STATE_IDLE;
+
 /* MQTT 是否处于"已连接且已订阅"状态，0=离线 1=在线。
  * 巴法云控制台显示的"订阅者 在线/离线"看的就是这条订阅，
- * 所以这个变量既用于屏幕显示，也用于决定要不要重连 */
+ * 所以这个变量既用于屏幕显示，也用于决定要不要重连。
+ * 注意：它和 g_ota_state 是**两个维度**；WIFI_CONNECTED + online=0 是正常组合。 */
 volatile uint8_t g_mqtt_online = 0;
+
 /* MQTT 最近一次失败卡在哪个阶段，含义见 MQTT_STAGE_xxx。
- * 屏幕会显示成 "MQTT: offline#N"，不接串口也能判断是模块没应答、
- * AT 固件不支持 MQTT、连不上 Broker，还是订阅被拒 */
+ * 屏幕会显示成 "MQTT: off noAT/noFW/noBroker/noSub"，
+ * 不接串口也能判断是模块没应答、AT 固件不支持 MQTT、连不上 Broker，还是订阅被拒。
+ * 它是粘滞值：成功后清 NONE，失败后保留；因此 UI 判断时必须加 online==0 前置。 */
 volatile uint8_t g_mqtt_fail_stage = MQTT_STAGE_NONE;
 
-/* 模块最近一次应答的可打印摘要（最多 20 字符），UI 直接显示。
- * 这是"模块到底回没回"的唯一直接证据，不接串口也能判：
- *   "<NO REPLY>" = 一个字节都没收到（供电/接线/波特率/模块死机）
- *   "ERROR"      = 模块听懂了但拒绝（多见于 AT 固件不带 MQTT 指令集） */
+/* 模块最近一次应答的可打印摘要（最多 20 字符 + '\0'），UI 直接显示。
+ * 这是"模块到底回没回"的直接证据，不接串口也能判：
+ *   "<no data>" = 本次抓拍时缓冲为空（不等于模块没应答，可能只是没抓到）
+ *   "ERROR"     = 模块听懂了但拒绝（多见于 AT 固件不带 MQTT 指令集）
+ *   "otaX:..."  = OTA 当前卡在哪一步（由 esp8266_ota.c 的 OTA_Mark 写入）
+ * 写入者：ESP_DumpResp / OTA_Mark / OTA_MarkText / OTA 进度 / MQTT 成功态；
+ * 读取者：UITask。它是诊断快照，不参与控制流。 */
 char g_at_tail[22] = {0};
 
 /* USER CODE END Variables */
@@ -257,8 +294,9 @@ void StartUITask(void *argument)
   lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
   // 2. 标题（10 号字，128px 宽度刚好容纳这 17 个字符）
+  //    版本号来自 app_config.h，改版本只改那一处
   lv_obj_t *title_label = lv_label_create(lv_scr_act());
-  lv_label_set_text(title_label, "Edge Gateway V2.1");
+  lv_label_set_text(title_label, "Edge Gateway " APP_VERSION_STR);
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
   lv_obj_set_style_text_color(title_label, lv_color_hex(0x58A6FF), 0);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 6);
@@ -608,7 +646,19 @@ static uint8_t ESP_Cmd_Check(const char *cmd, const char *ack, uint32_t timeout_
   return 2U;
 }
 
-/* 完整的"连接 + 订阅"，返回 true 表示已连上且已订阅 */
+/* 完整的"连接 + 订阅"，返回 true 表示已连上且已订阅。
+ *
+ * 调用上下文：
+ *   - 只从 MQTTTask 调用（g_mqtt_online == 0 时），不与其他任务共享；
+ *   - 内部全是阻塞式 AT 等待，最长 MQTT_CONN_TIMEOUT + 若干次重试；
+ *   - 调用期间 USART3 归 MQTTTask 独占，OTA 不可能同时进来。
+ *
+ * 对全局变量的副作用：
+ *   成功 -> g_mqtt_fail_stage = NONE；esp_rx_buf 里保留最后应答；
+ *           调用方（StartMQTTTask）再把 g_mqtt_online 置 1；
+ *   失败 -> 只设置 g_mqtt_fail_stage（USERCFG/CONN/SUB），不碰 online；
+ *           由调用方决定 3s 后重试。
+ */
 static bool MQTT_Connect_And_Subscribe(void)
 {
   char cmd[256];
@@ -741,7 +791,16 @@ void StartMQTTTask(void *argument)
   }
   ESP_DumpResp();
 
-  /* Infinite loop */
+  /* ================= 本任务主循环的职责顺序（每轮约 1s） =================
+   *   0. 若 g_mqtt_online == 0：完整重连 + 订阅；失败 3s 后重试
+   *   1. 检查 +MQTTSUBRECV + "upgrade"：触发 OTA（同步阻塞，独占 USART3）
+   *   2. 检查 +MQTTDISCONNECTED：置离线，下一轮重连
+   *   3. 每 30s 补订阅（幂等，兜住模块静默重连后订阅丢失）
+   *   4. 缓冲 > 3/4：清空，防止 esp_rx_len 封顶后再也收不到数据
+   *
+   * 顺序不能换：必须"先确保在线，再处理 OTA/断线/补订阅"；
+   * OTA 分支最后 continue，避免同轮继续跑补订阅去抢串口。
+   * ==================================================================== */
   for(;;)
   {
     /* 0. 未在线就先连接 + 订阅。连不上就 3 秒后重试，
@@ -807,16 +866,15 @@ void StartMQTTTask(void *argument)
 
       //切换状态并触发HTTP OTA下载
       g_ota_state = OTA_STATE_DOWNLOADING;
-      /* 192.168.137.1 = Windows 移动热点的网关地址，也就是本机 PC。
-       * 原来写的是 192.168.137.13 —— 那是热点 DHCP 分给 ESP8266 自己的地址，
-       * 等于让模块去连自己的 80 端口，必然连接被拒。
-       * 用 ipconfig 确认过：本地连接* 2（移动热点）= 192.168.137.1
+      /* 服务器地址、端口、固件路径统一由 app_config.h 提供。
        *
-       * 固件从 D:\A_Project\ota_release\ 取，文件名带版本号：
-       * 这个目录与 build 目录分离，不会被下一次编译覆盖，
-       * 看 URL 就知道刷的是哪一版，不会再出现"分不清刷的哪份固件"。
-       * 发布新版本时：把新 bin 复制成 A_Project_vX.Y.bin，再改这一行 */
-      if (!ESP8266_HTTP_OTA_Download("192.168.137.1", 80, "/A_Project_v3.0.bin"))
+       * 路径是固定名 "/A_Project.bin"，**不带版本号** ——
+       * 这是"只推不烧"的关键：设备永远请求同一个 URL，
+       * 服务端覆盖 ota_release/A_Project.bin 即生效。
+       * 早期用的是 "/A_Project_v3.0.bin" 这种带版本号的名字，
+       * 每发一版都要改这一行 + 重编译 + 重烧基线固件，
+       * 那就不是远程升级，只是换了个方式烧录。 */
+      if (!ESP8266_HTTP_OTA_Download(OTA_SERVER_IP, OTA_SERVER_PORT, OTA_FIRMWARE_PATH))
       {
         /* 下载失败不会复位，要把串口从 HTTP 流程里收回来再重连 MQTT，
          * 否则模块可能停在半连接状态（link 开着、CIPMODE 被自动清 0），
